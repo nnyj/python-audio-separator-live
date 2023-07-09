@@ -18,7 +18,7 @@ Command-line arguments:
 
 # Hardware requirements
 
-GPU mode is necessary to perform the inferenece in near realtime.
+GPU mode is necessary to perform the inference in near realtime.
 
 Make sure to install the onnxruntime-gpu:
 `pip install onnxruntime-gpu`

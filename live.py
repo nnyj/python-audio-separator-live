@@ -4,7 +4,7 @@ import sounddevice as sd
 import numpy as np
 import collections
 
-from utils import bold
+from utils import bold, get_first_slice, get_middle_slice, get_last_slice
 from audio_separator import Separator
 
 def get_parser():
@@ -46,30 +46,12 @@ def query_devices(device, kind):
     sys.exit(1)
   return caps
 
-def get_last_slice(arr, slice_arg):
-  slice_len = len(arr) // slice_arg
-  start_index = slice_len*(slice_arg-1)
-  end_index = slice_len*(slice_arg)
-  return arr[start_index:end_index]
-
-def get_middle_slice(arr, slice_arg):
-  slice_len = len(arr) // slice_arg
-  start_index = slice_len*(slice_arg//2) # 2nd quarter
-  end_index = slice_len*((slice_arg//2)+1)
-  return arr[start_index:end_index]
-
-def get_first_slice(arr, slice_arg):
-  slice_len = len(arr) // slice_arg
-  start_index = slice_len*(1) # 2nd quarter
-  end_index = slice_len*(2)
-  return arr[start_index:end_index]
-
 def main():
   args = get_parser().parse_args()
 
   streamer = Separator(None,
     model_name='UVR-MDX-NET-Inst_Main',
-    model_file_dir="D:/N/Desktop",
+    model_file_dir="/tmp/audio-separator-models/",
     use_cuda=True)
   
   sample_rate = 48000
