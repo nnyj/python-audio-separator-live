@@ -207,7 +207,7 @@ class Separator:
     begin = time.time()
     spec_pred = self.model_run(spek)
     end = time.time() - begin
-    self.logger.debug(f'model_run(): {end}')
+    self.logger.debug(f'model_run(): {end:.3f}s')
     output = (
       self.istft(torch.tensor(spec_pred).to(self.device))
       .to(self.cpu)[:, :, self.trim : -self.trim]
