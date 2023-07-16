@@ -24,7 +24,7 @@ use_cuda: (Optional) Flag to use Nvidia GPU via CUDA for separation if available
 
 # Hardware requirements
 
-GPU mode is necessary to perform the inference in near realtime.
+GPU mode is recommended to perform the inference with lower latency.
 
 Make sure to install the onnxruntime-gpu:
 `pip install onnxruntime-gpu`
