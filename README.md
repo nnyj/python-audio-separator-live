@@ -1,6 +1,6 @@
 # Audio Separator in Real Time
 
-This was quickly pieced together for fun. The audio separation quality is not the best, but it might work for your use-case.
+Use it as a karaoke machine for any sources without needing to convert beforehand.
 
 Any feedback or pull requests are appreciated.
 
@@ -17,7 +17,7 @@ Command-line arguments:
 -i or --in: Input device
 -o or --out: Output device
 log_level: (Optional) Logging level, e.g. info, debug, warning. Default: INFO
-model_name: (Optional) The name of the model to use for separation. Default: UVR_MDXNET_KARA_2
+model_name: (Optional) The name of the model to use for separation. Default: UVR-MDX-NET-Inst_Main
 model_file_dir: (Optional) Directory to cache model files in. Default: /tmp/audio-separator-models/
 use_cuda: (Optional) Flag to use Nvidia GPU via CUDA for separation if available. Default: False
 ```
