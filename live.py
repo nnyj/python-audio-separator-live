@@ -1,26 +1,71 @@
 import argparse
+import logging
 import sys
-import sounddevice as sd
-import numpy as np
-import collections
+import threading
+from collections import deque
 
-from utils import get_middle_slice
+import numpy as np
+import sounddevice as sd
 from audio_separator import Separator
 
+samplerate = 48000
+blocksize = 4000 # Blocksize when reading/writing sounddevice stream
+window_size = 20 # Processing window for inference, recommended at least 1.5 seconds
+overlap_size = 1 # How many frames to keep before and after the processing window
+
+pending_buffer = deque(maxlen=window_size*2)
+processed_buffer = deque(maxlen=window_size*3)
+processing_buffer = deque(maxlen=window_size + (overlap_size*2))
+overlap_buffer = deque(maxlen=overlap_size*2)
+
+initial_wait_size = 16 # Initial frames to buffer for slower CPUs
+initial_wait = True # Recommended for CPU mode
+use_threading = True # Recommended for CPU mode, introduces ~3s delay
+
+def separate_audio():
+  _, _, out = streamer.separate(np.concatenate(processing_buffer, axis=0))
+  # Get middle non-overlapping frames for playback
+  available_chunks = out.shape[0]//blocksize
+  [processed_buffer.append(x) for x in np.array_split(out, available_chunks)[overlap_size:available_chunks-overlap_size]]
+
+  # Take last x raw buffer as overlap_buffer
+  if len(processing_buffer) != 0:
+    for i in range(overlap_size*2):
+      overlap_buffer.append(processing_buffer.pop())
+
+def callback(indata, outdata, frames, time, status):
+  global initial_wait
+  if status:
+    print(status)
+  pending_buffer.append(indata.copy())
+
+  if len(pending_buffer) >= window_size-2:
+    # Add overlap_buffer into processing_buffer
+    processing_buffer.clear()
+    while len(overlap_buffer) > 0:
+      processing_buffer.append(overlap_buffer.pop())
+
+    # Take first x frames from pending_buffer
+    for i in range(window_size-2):
+      processing_buffer.append(pending_buffer.popleft())
+    
+    if use_threading: threading.Thread(target=separate_audio).start()
+    else: separate_audio()
+
+  # print(f'Available buffer: {len(processed_buffer)}')
+  if len(processed_buffer) == 0: initial_wait = True
+  if len(processed_buffer) > initial_wait_size: initial_wait = False
+  if len(processed_buffer) > 0 and not initial_wait:
+    outdata[:] = processed_buffer.popleft()
+
 def get_parser():
-  parser = argparse.ArgumentParser(
-    "denoiser.live",
-    description="Performs live speech enhancement, reading audio from "
-          "the default mic (or interface specified by --in) and "
-          "writing the enhanced version to 'Soundflower (2ch)' "
-          "(or the interface specified by --out)."
-    )
-  parser.add_argument(
-    "-i", "--in", dest="in_", default="CABLE-A Output (VB-Audio Cable , MME",
-    help="name or index of input interface.")
-  parser.add_argument(
-    "-o", "--out", default="SteelSeries Sonar - Gaming (Ste, MME",
-    help="name or index of output interface.")
+  parser = argparse.ArgumentParser()
+  parser.add_argument("-i", "--in", dest="in_", default="CABLE-A Output (VB-Audio Cable , MME", help="name or index of input interface.")
+  parser.add_argument("-o", "--out", default="SteelSeries Sonar - Gaming (Ste, MME", help="name or index of output interface.")
+  parser.add_argument("--log_level", default="INFO", help="Optional: Logging level, e.g. info, debug, warning. Default: INFO")
+  parser.add_argument("--model_name", default="UVR-MDX-NET-Inst_Main", help="Optional: model name to be used for separation.")
+  parser.add_argument("--model_file_dir", default="/tmp/audio-separator-models/", help="Optional: model files directory.")
+  parser.add_argument("--use_cuda", action="store_true", help="Optional: use Nvidia GPU with CUDA for separation.")
   return parser
 
 def parse_audio_device(device):
@@ -47,82 +92,43 @@ def query_devices(device, kind):
   return caps
 
 def main():
+  global streamer, initial_wait, initial_wait_size, use_threading
+
   args = get_parser().parse_args()
+  device_in = parse_audio_device(args.in_)
+  device_out = parse_audio_device(args.out)
+  
+  logger = logging.getLogger(__name__)
+  log_level = getattr(logging, args.log_level.upper())
+  logger.setLevel(log_level)
+
+  if args.use_cuda:
+    print('use_cuda is True: disabling threading and initial_wait')
+    use_threading = False
+    initial_wait = False
+    initial_wait_size = 0
 
   streamer = Separator(None,
-    model_name='UVR-MDX-NET-Inst_Main',
-    model_file_dir="/tmp/audio-separator-models/",
-    use_cuda=True)
-  
-  sample_rate = 48000
-  device_in = parse_audio_device(args.in_)
-  caps = query_devices(device_in, "input")
-  channels_in = min(caps['max_input_channels'], 2)
-  stream_in = sd.InputStream(
-    device=device_in,
-    samplerate=sample_rate,
-    channels=channels_in)
+                       model_name=args.model_name,
+                       model_file_dir=args.model_file_dir,
+                       use_cuda=args.use_cuda,
+                       log_level=log_level)
 
-  device_out = parse_audio_device(args.out)
-  caps = query_devices(device_out, "output")
-  channels_out = min(caps['max_output_channels'], 2)
-  stream_out = sd.OutputStream(
-    device=device_out,
-    samplerate=sample_rate,
-    channels=channels_out)
+  try:
+    with sd.Stream(device=(device_in, device_out),
+                   samplerate=samplerate,
+                   channels=2,
+                   callback=callback,
+                   blocksize=blocksize):
+      frame_length = blocksize/samplerate
 
-  stream_in.start()
-  stream_out.start()
-  first = True
-  current_time = 0
-  last_log_time = 0
-  last_error_time = 0
-  cooldown_time = 2
-  log_delta = 10
-  sr_ms = sample_rate / 1000
-  stride_ms = streamer.stride / sr_ms
-  print(f"Ready to process audio, total lag: {streamer.total_length / sr_ms:.1f}ms.")
-
-  # For overlapping buffer (window_size 8+ recommended, tradeoff between latency & inference quality)
-  window_size = 8
-  frame_buffers = collections.deque(maxlen=window_size)
-  for i in range(window_size-1):
-    frame_buffers.append(stream_in.read(streamer.total_length)[0])
-
-  while True:
-    try:
-      if current_time > last_log_time + log_delta:
-        last_log_time = current_time
-        tpf = streamer.time_per_frame * 1000
-        rtf = tpf / stride_ms
-        print(f"time per frame: {tpf:.1f}ms, ", end='')
-        print(f"RTF: {rtf:.1f}")
-        streamer.reset_time_per_frame()
-
-      length = streamer.total_length if first else streamer.stride
-      first = False
-      current_time += length / sample_rate
-      frame, overflow = stream_in.read(length)
-
-      frame_buffers.append(frame)
-      frame_to_process = np.concatenate(frame_buffers, axis=0)
-      # print(f'len(frame_buffers): {len(frame_buffers)}')
-
-      _, _, out = streamer.separate(frame_to_process)
-      # out = out[len(out)//2:]
-      out = get_middle_slice(out, window_size)
-      underflow = stream_out.write(out)
-      if overflow or underflow:
-        if current_time >= last_error_time + cooldown_time:
-          last_error_time = current_time
-          tpf = 1000 * streamer.time_per_frame
-          print(f"Not processing audio fast enough, time per frame is {tpf:.1f}ms "
-              f"(should be less than {stride_ms:.1f}ms).")
-    except KeyboardInterrupt:
-      print("Stopping")
-      break
-  stream_out.stop()
-  stream_in.stop()
+      print(f'Frame length: {frame_length:.2f}s')
+      print(f'Window length: {frame_length*window_size:.2f}s')
+      print(f'Total latency: {frame_length*(window_size+overlap_size+initial_wait_size):.2f}s')
+      print('press Return to quit')
+      input()
+  except KeyboardInterrupt:
+    print("Stopping")
 
 if __name__ == "__main__":
   main()
