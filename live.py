@@ -4,7 +4,7 @@ import sounddevice as sd
 import numpy as np
 import collections
 
-from utils import bold, get_first_slice, get_middle_slice, get_last_slice
+from utils import get_middle_slice
 from audio_separator import Separator
 
 def get_parser():
@@ -35,7 +35,7 @@ def query_devices(device, kind):
   try:
     caps = sd.query_devices(device, kind=kind)
   except ValueError:
-    message = bold(f"Invalid {kind} audio interface {device}.\n")
+    message = print(f"Invalid {kind} audio interface {device}.\n")
     message += (
       "If you are on Mac OS X, try installing Soundflower "
       "(https://github.com/mattingalls/Soundflower).\n"

@@ -11,9 +11,9 @@ def process():
     print(f'processing_buffer: {processing_buffer}')
     out = [x for x in processing_buffer]
     available_chunks = len(out)
-    [processed_buffer.append(x[0]) for x in np.array_split(out, available_chunks)[overlap_size:-overlap_size]]
-    overlap_buffer.append(processing_buffer.pop())
-    overlap_buffer.append(processing_buffer.pop())
+    [processed_buffer.append(x[0]) for x in np.array_split(out, available_chunks)[overlap_size:available_chunks-overlap_size]]
+    for i in range(overlap_size*2):
+        overlap_buffer.append(processing_buffer.pop())
 
 window_size = 8
 overlap_size = 1
