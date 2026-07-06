@@ -1,59 +1,99 @@
-# Audio Separator in Real Time
+# python-audio-separator-live
 
-Use it as a karaoke machine for any sources without needing to convert beforehand.
+Real-time vocal/instrumental separation for any audio playing on your PC, e.g. live karaoke without pre-converting songs. Wraps [audio-separator](https://github.com/nomadkaraoke/python-audio-separator) models in a low-latency streaming loop adapted from [denoiser](https://github.com/facebookresearch/denoiser).
 
-Any feedback or pull requests are appreciated.
+## Features
 
-# Installation
+- Live device-to-device separation with ~1.7s latency on GPU
+- Supports MDX-NET `.onnx` and BS/MelBand Roformer `.ckpt` models (current SOTA), auto-downloaded on first use
+- Stem selection: instrumental (karaoke) by default, `--stem vocals` for acapella
+- Startup benchmark prints inference speed, warns if model too slow for realtime
+- File conversion needs no code here, use the bundled `audio-separator` CLI directly
 
-Clone this repo.
+## Usage
 
-# Usage
-
-1. cd to the project root directory and run `python live.py`
-
-Command-line arguments:
-```
--i or --in: Input device
--o or --out: Output device
-log_level: (Optional) Logging level, e.g. info, debug, warning. Default: INFO
-model_name: (Optional) The name of the model to use for separation. Default: UVR-MDX-NET-Inst_Main
-model_file_dir: (Optional) Directory to cache model files in. Default: /tmp/audio-separator-models/
-use_cuda: (Optional) Flag to use Nvidia GPU via CUDA for separation if available. Default: False
+```sh
+live.bat                       # double-click or run from terminal, picks devices interactively
+python live.py                 # same, interactive device picker then run
+python live.py -i "CABLE-A Output" -o "Headphones" -m UVR-MDX-NET-Inst_HQ_3.onnx
+python live.py -l              # list devices and exit
 ```
 
-# Hardware requirements
+| Flag            | Description                                                                                       |
+| --------------- | ------------------------------------------------------------------------------------------------- |
+| `-i`, `--in`    | Input device index or name substring (skips picker)                                               |
+| `-o`, `--out`   | Output device index or name substring (skips picker)                                              |
+| `-m`, `--model` | Model filename, see `audio-separator --list_models` (default: `vocals_mel_band_roformer.ckpt`)    |
+| `-s`, `--stem`  | Stem to play: `auto` = first non-vocal stem, or `vocals` etc                                      |
+| `-l`, `--list`  | List devices and exit                                                                             |
+| `--model_dir`   | Model download cache (default: `/tmp/audio-separator-models/`, shared with `audio-separator` CLI) |
 
-GPU mode is recommended to perform the inference with lower latency.
+### Streaming system audio
 
-Make sure to install the onnxruntime-gpu:
-`pip install onnxruntime-gpu`
+Loopback capture is not supported by sounddevice, and this app must intercept audio before it reaches the speakers anyway. Route through a virtual cable ([VB-Cable](https://vb-audio.com/Cable/)):
 
-## Benchmark results:
+1. Set Windows default playback to `CABLE Input`
+2. `python live.py -i "CABLE Output" -o "Speakers"`
 
-| CPU / GPU            | model_run() speed | window_size | overlap_size | initial_wait_size | block_size | sample_rate | Theoretical latency |
-| -------------------- | ----------------- | ----------- | ------------ | ----------------- | ---------- | ----------- | ------------------- |
-| i7-12700K & RTX 3090 | 0.04s             | 20          | 1            | 0                 | 4000       | 48000       | 1.75s               |
-| i7-12700K            | 0.82s             | 20          | 1            | 16                | 4000       | 48000       | 3.08s               |
+Original audio goes to the cable, you only hear the separated stem.
 
-# Configurable parameters
+### File conversion
 
-| Parameters        | Suggested values | Description                                                                                                 |
-| ----------------- | ---------------- | ----------------------------------------------------------------------------------------------------------- |
-| window_size       | 16-32            | Processing window for inference, recommended at least 1.5 seconds                                           |
-| overlap_size      | 1-4              | How many frames to keep before and after the processing window to reduce artifacts                          |
-| initial_wait      | True/False       | Use True for CPU, False for GPU                                                                             |
-| initial_wait_size | 16               | Initial frames to buffer for slower CPUs, duration should be longer than time needed to execute model_run() |
-| blocksize         | 4000             | The rate to call the callback function of sounddevice                                                       |
-| use_threading     | True/False       | Use True for CPU, False for GPU (Introduces additional ~3s delay)                                           |
+Handled entirely by the upstream CLI, same models and cache:
 
-# Features
+```sh
+audio-separator song.mp3 --model_filename vocals_mel_band_roformer.ckpt
+audio-separator --list_models --list_filter=vocals
+```
 
-- Real-time audio separation using any of the MDX-NET single model.
-- Approximately 1-5 seconds latency depending on hardware.
-- No ensemble support yet.
+## Install
 
-# Credits
+1. Install [ffmpeg](https://www.gyan.dev/ffmpeg/builds/) ([all platforms](https://ffmpeg.org/download.html)) and add to PATH
+2. Install [VB-Audio Cable](https://vb-audio.com/Cable/) (optional, recommended for routing system audio, see [Streaming system audio](#streaming-system-audio))
+3. Install Python dependencies:
+```sh
+pip install -r requirements.txt
+```
+4. For GPU acceleration (recommended), install the CUDA torch build:
+```sh
+pip install torch --index-url https://download.pytorch.org/whl/cu128
+```
+RTX 50xx (Blackwell) requires cu128+. CPU-only works but ~10x slower, check the startup benchmark warning.
 
-- [karaokenerds](https://github.com/karaokenerds) - Author of [python-audio-separator](https://github.com/karaokenerds/python-audio-separator), a python package based on [Ultimate Vocal Remover GUI](https://github.com/Anjok07/ultimatevocalremovergui) by [Anjok07](https://github.com/Anjok07).
-- [facebookresearch](https://github.com/facebookresearch) - Author of [denoiser](https://github.com/facebookresearch/denoiser). Copied code for implementing real-time streaming via sounddevice.
+## Tuning
+
+Constants at the top of `live.py`:
+
+| Parameter           | Default | Description                                                     |
+| ------------------- | ------- | --------------------------------------------------------------- |
+| `blocksize`         | 4410    | Stream frame size, 0.1s at 44.1kHz                              |
+| `window_size`       | 16      | Frames per inference window, quality degrades under ~1.5s       |
+| `overlap_size`      | 1       | Frames trimmed from window edges to hide seam artifacts         |
+| `initial_wait_size` | 12      | Frames buffered before playback starts, raise if audio stutters |
+
+## How it works
+
+Incoming frames accumulate in a pending buffer. Every `window_size - 2 * overlap_size` frames, a window is assembled from the previous window's tail (overlap) plus fresh frames and sent to the model on a background thread. Only the middle of each separated window is queued for playback, the overlapping edges are discarded to mask block-boundary artifacts. Frames consumed and produced per cycle are equal, so the pipeline stays balanced.
+
+Roformer models default to ~8s inference chunks and reject shorter input, so `live.py` overrides the model segment size to fit the streaming window.
+
+## Benchmark
+
+RTX 5080, 1.6s window:
+
+| Model                                      | Inference per window | Headroom                 |
+| ------------------------------------------ | -------------------- | ------------------------ |
+| `vocals_mel_band_roformer.ckpt` (SDR 12.6) | 0.10s                | 16x faster than realtime |
+| `UVR-MDX-NET-Inst_HQ_3.onnx`               | 0.18s                | 9x faster than realtime  |
+
+End-to-end latency ~1.7s: window fill 1.4s + inference + one frame.
+
+## Credits
+
+- [nomadkaraoke/python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator): model loading and inference
+- [facebookresearch/denoiser](https://github.com/facebookresearch/denoiser): streaming buffer pattern
+- [Anjok07/ultimatevocalremovergui](https://github.com/Anjok07/ultimatevocalremovergui): model ecosystem
+
+## License
+
+[MIT](LICENSE)
