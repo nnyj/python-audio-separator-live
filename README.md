@@ -1,5 +1,11 @@
 # python-audio-separator-live
 
+<div align="center">
+
+[![Stars](https://img.shields.io/github/stars/nnyj/python-audio-separator-live?style=for-the-badge&labelColor=555&color=e3b341)](https://github.com/nnyj/python-audio-separator-live/stargazers)
+
+</div>
+
 Real-time vocal/instrumental separation for any audio playing on your PC, e.g. live karaoke without pre-converting songs. Wraps [audio-separator](https://github.com/nomadkaraoke/python-audio-separator) models in a low-latency streaming loop adapted from [denoiser](https://github.com/facebookresearch/denoiser).
 
 ## Features
@@ -19,14 +25,14 @@ python live.py -i "CABLE-A Output" -o "Headphones" -m UVR-MDX-NET-Inst_HQ_3.onnx
 python live.py -l              # list devices and exit
 ```
 
-| Flag            | Description                                                                                       |
-| --------------- | ------------------------------------------------------------------------------------------------- |
-| `-i`, `--in`    | Input device index or name substring (skips picker)                                               |
-| `-o`, `--out`   | Output device index or name substring (skips picker)                                              |
-| `-m`, `--model` | Model filename, see `audio-separator --list_models` (default: `vocals_mel_band_roformer.ckpt`)    |
-| `-s`, `--stem`  | Stem to play: `auto` = first non-vocal stem, or `vocals` etc                                      |
-| `-l`, `--list`  | List devices and exit                                                                             |
-| `--model_dir`   | Model download cache (default: `/tmp/audio-separator-models/`, shared with `audio-separator` CLI) |
+| Flag            | Default                         | Description                                             |
+| --------------- | ------------------------------- | ------------------------------------------------------- |
+| `-i`, `--in`    |                                 | Input device index or name substring (skips picker)     |
+| `-o`, `--out`   |                                 | Output device index or name substring (skips picker)    |
+| `-m`, `--model` | `vocals_mel_band_roformer.ckpt` | Model filename, see `audio-separator --list_models`     |
+| `-s`, `--stem`  | `auto`                          | Stem to play: `auto` = first non-vocal, or `vocals` etc |
+| `-l`, `--list`  |                                 | List devices and exit                                   |
+| `--model_dir`   | `/tmp/audio-separator-models/`  | Model download cache, shared with `audio-separator` CLI |
 
 ### Streaming system audio
 
@@ -46,20 +52,6 @@ audio-separator song.mp3 --model_filename vocals_mel_band_roformer.ckpt
 audio-separator --list_models --list_filter=vocals
 ```
 
-## Install
-
-1. Install [ffmpeg](https://www.gyan.dev/ffmpeg/builds/) ([all platforms](https://ffmpeg.org/download.html)) and add to PATH
-2. Install [VB-Audio Cable](https://vb-audio.com/Cable/) (optional, recommended for routing system audio, see [Streaming system audio](#streaming-system-audio))
-3. Install Python dependencies:
-```sh
-pip install -r requirements.txt
-```
-4. For GPU acceleration (recommended), install the CUDA torch build:
-```sh
-pip install torch --index-url https://download.pytorch.org/whl/cu128
-```
-RTX 50xx (Blackwell) requires cu128+. CPU-only works but ~10x slower, check the startup benchmark warning.
-
 ## Tuning
 
 Constants at the top of `live.py`:
@@ -76,6 +68,25 @@ Constants at the top of `live.py`:
 Incoming frames accumulate in a pending buffer. Every `window_size - 2 * overlap_size` frames, a window is assembled from the previous window's tail (overlap) plus fresh frames and sent to the model on a background thread. Only the middle of each separated window is queued for playback, the overlapping edges are discarded to mask block-boundary artifacts. Frames consumed and produced per cycle are equal, so the pipeline stays balanced.
 
 Roformer models default to ~8s inference chunks and reject shorter input, so `live.py` overrides the model segment size to fit the streaming window.
+
+## Install
+
+1. Install [ffmpeg](https://www.gyan.dev/ffmpeg/builds/) and add to PATH
+2. Install [VB-Audio Cable](https://vb-audio.com/Cable/) (optional, recommended for routing system audio, see [Streaming system audio](#streaming-system-audio))
+3. Install Python dependencies:
+
+```sh
+pip install -r requirements.txt
+```
+
+4. For GPU acceleration (recommended), install the CUDA torch build:
+
+```sh
+pip install torch --index-url https://download.pytorch.org/whl/cu128
+```
+
+> [!NOTE]
+> RTX 50xx (Blackwell) requires cu128+. CPU-only works but ~10x slower, check the startup benchmark warning.
 
 ## Benchmark
 
